@@ -9,7 +9,7 @@ import (
 	"github.com/boomyao/crosh/internal/config"
 )
 
-const version = "1.0.0"
+const version = "0.0.1"
 
 func main() {
 	// Load config
