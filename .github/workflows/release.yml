@@ -1,0 +1,195 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Build binaries
+        env:
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
+        run: |
+          mkdir -p dist
+          
+          # Linux AMD64
+          echo "Building for linux/amd64..."
+          GOOS=linux GOARCH=amd64 go build -ldflags "-X main.version=${VERSION} -X main.buildTime=$(date -u '+%Y-%m-%d_%H:%M:%S')" -o dist/crosh-linux-amd64 ./cmd/crosh
+          
+          # Linux ARM64
+          echo "Building for linux/arm64..."
+          GOOS=linux GOARCH=arm64 go build -ldflags "-X main.version=${VERSION} -X main.buildTime=$(date -u '+%Y-%m-%d_%H:%M:%S')" -o dist/crosh-linux-arm64 ./cmd/crosh
+          
+          # macOS AMD64
+          echo "Building for darwin/amd64..."
+          GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.version=${VERSION} -X main.buildTime=$(date -u '+%Y-%m-%d_%H:%M:%S')" -o dist/crosh-darwin-amd64 ./cmd/crosh
+          
+          # macOS ARM64 (Apple Silicon)
+          echo "Building for darwin/arm64..."
+          GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.version=${VERSION} -X main.buildTime=$(date -u '+%Y-%m-%d_%H:%M:%S')" -o dist/crosh-darwin-arm64 ./cmd/crosh
+          
+          # Windows AMD64
+          echo "Building for windows/amd64..."
+          GOOS=windows GOARCH=amd64 go build -ldflags "-X main.version=${VERSION} -X main.buildTime=$(date -u '+%Y-%m-%d_%H:%M:%S')" -o dist/crosh-windows-amd64.exe ./cmd/crosh
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Create tarballs for offline installation
+        run: |
+          cd dist
+          
+          # Linux AMD64
+          tar czf crosh-${VERSION}-linux-amd64.tar.gz crosh-linux-amd64
+          
+          # Linux ARM64
+          tar czf crosh-${VERSION}-linux-arm64.tar.gz crosh-linux-arm64
+          
+          # macOS AMD64
+          tar czf crosh-${VERSION}-darwin-amd64.tar.gz crosh-darwin-amd64
+          
+          # macOS ARM64
+          tar czf crosh-${VERSION}-darwin-arm64.tar.gz crosh-darwin-arm64
+          
+          # Windows AMD64
+          zip crosh-${VERSION}-windows-amd64.zip crosh-windows-amd64.exe
+        env:
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/crosh-linux-amd64
+            dist/crosh-linux-arm64
+            dist/crosh-darwin-amd64
+            dist/crosh-darwin-arm64
+            dist/crosh-windows-amd64.exe
+            dist/crosh-*.tar.gz
+            dist/crosh-*.zip
+            dist/checksums.txt
+          body: |
+            ## Installation
+            
+            ### Quick Install (Recommended for China users)
+            
+            ```bash
+            curl -fsSL https://cdn.jsdelivr.net/gh/boomyao/crosh@latest/scripts/install.sh | bash
+            ```
+            
+            ### Manual Download via jsDelivr CDN (Fast in China)
+            
+            - Linux AMD64: `https://cdn.jsdelivr.net/gh/boomyao/crosh@releases/dist/crosh-linux-amd64`
+            - Linux ARM64: `https://cdn.jsdelivr.net/gh/boomyao/crosh@releases/dist/crosh-linux-arm64`
+            - macOS AMD64: `https://cdn.jsdelivr.net/gh/boomyao/crosh@releases/dist/crosh-darwin-amd64`
+            - macOS ARM64: `https://cdn.jsdelivr.net/gh/boomyao/crosh@releases/dist/crosh-darwin-arm64`
+            - Windows AMD64: `https://cdn.jsdelivr.net/gh/boomyao/crosh@releases/dist/crosh-windows-amd64.exe`
+            
+            ### Manual Download from GitHub Releases (Fallback)
+            
+            Download the appropriate binary for your platform from the assets below.
+            
+            ### What's Changed
+            
+            See the full changelog in the commits since the last release.
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push binaries to releases branch
+        run: |
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Create or checkout releases branch
+          git fetch origin releases || true
+          git checkout -B releases
+          
+          # Clear the branch (keep only dist folder)
+          git rm -rf . || true
+          git clean -fdx
+          
+          # Copy dist folder from build
+          mkdir -p dist
+          cp -r ../dist/* dist/ || true
+          
+          # Download and add xray-core binaries
+          mkdir -p xray
+          echo "Downloading Xray-core releases..."
+          
+          # Get latest Xray-core version
+          XRAY_VERSION=$(curl -s https://api.github.com/repos/XTLS/Xray-core/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "Latest Xray-core version: $XRAY_VERSION"
+          
+          # Download Xray-core for all platforms
+          platforms=(
+            "linux-64"
+            "linux-arm64-v8a"
+            "macos-64"
+            "macos-arm64-v8a"
+            "windows-64"
+          )
+          
+          for platform in "${platforms[@]}"; do
+            echo "Downloading Xray-$platform..."
+            curl -fsSL "https://github.com/XTLS/Xray-core/releases/download/$XRAY_VERSION/Xray-$platform.zip" \
+              -o "xray/Xray-$platform.zip" || echo "Failed to download $platform"
+          done
+          
+          # Download geo data files
+          echo "Downloading geo data files..."
+          curl -fsSL "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat" \
+            -o "xray/geoip.dat"
+          curl -fsSL "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat" \
+            -o "xray/geosite.dat"
+          
+          # Create version file
+          echo "$XRAY_VERSION" > xray/VERSION
+          
+          # Create README for the releases branch
+          cat > README.md << 'EOF'
+          # crosh Releases Branch
+          
+          This branch contains pre-built binaries for crosh and xray-core.
+          
+          **DO NOT commit to this branch manually!**
+          
+          This branch is automatically maintained by GitHub Actions.
+          
+          ## Access via jsDelivr CDN
+          
+          - crosh binaries: `https://cdn.jsdelivr.net/gh/boomyao/crosh@releases/dist/`
+          - xray-core binaries: `https://cdn.jsdelivr.net/gh/boomyao/crosh@releases/xray/`
+          EOF
+          
+          # Commit and force push
+          git add .
+          git commit -m "Release ${{ steps.get_version.outputs.VERSION }} (with Xray-core $XRAY_VERSION)" || true
+          git push origin releases --force
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
