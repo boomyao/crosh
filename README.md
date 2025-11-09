@@ -51,12 +51,6 @@ That's it!
 - **Proxy**: Downloads and runs Xray-core with your subscription URL
 - All changes are reversible with `crosh off`
 
-## Requirements
-
-- Linux or macOS
-- Root access (for system-level configs)
-
 ## License
 
 MIT License - see [LICENSE](LICENSE)
-

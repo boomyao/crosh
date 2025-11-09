@@ -1,34 +1,61 @@
-name: Release
+name: Auto Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
+    paths:
+      - 'VERSION'
 
 permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build and Release
+  auto-release:
+    name: Auto Release on VERSION Change
     runs-on: ubuntu-latest
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Need at least 2 commits to detect changes
+
+      - name: Read VERSION file
+        id: read_version
+        run: |
+          VERSION=$(cat VERSION | tr -d '[:space:]')
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Detected version: ${VERSION}"
+
+      - name: Validate version format
+        run: |
+          VERSION="${{ steps.read_version.outputs.VERSION }}"
+          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$ ]]; then
+            echo "Error: Invalid version format: $VERSION"
+            echo "Version must follow semantic versioning (e.g., v1.0.0, v1.0.0-beta, v1.0.0+build)"
+            exit 1
+          fi
+          echo "✓ Version format is valid"
+
+      - name: Check if tag already exists
+        id: check_tag
+        run: |
+          VERSION="${{ steps.read_version.outputs.VERSION }}"
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "Error: Tag $VERSION already exists"
+            exit 1
+          fi
+          echo "✓ Tag $VERSION does not exist yet"
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.21'
 
-      - name: Get version from tag
-        id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-
       - name: Build binaries
         env:
-          VERSION: ${{ steps.get_version.outputs.VERSION }}
+          VERSION: ${{ steps.read_version.outputs.VERSION }}
         run: |
           mkdir -p dist
           
@@ -61,6 +88,7 @@ jobs:
       - name: Create tarballs for offline installation
         run: |
           cd dist
+          VERSION="${{ steps.read_version.outputs.VERSION }}"
           
           # Linux AMD64
           tar czf crosh-${VERSION}-linux-amd64.tar.gz crosh-linux-amd64
@@ -76,12 +104,20 @@ jobs:
           
           # Windows AMD64
           zip crosh-${VERSION}-windows-amd64.zip crosh-windows-amd64.exe
-        env:
-          VERSION: ${{ steps.get_version.outputs.VERSION }}
+
+      - name: Create Git tag
+        run: |
+          VERSION="${{ steps.read_version.outputs.VERSION }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$VERSION" -m "Release $VERSION"
+          git push origin "$VERSION"
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ steps.read_version.outputs.VERSION }}
+          name: Release ${{ steps.read_version.outputs.VERSION }}
           files: |
             dist/crosh-linux-amd64
             dist/crosh-linux-arm64
@@ -112,7 +148,7 @@ jobs:
             
             Download the appropriate binary for your platform from the assets below.
             
-            ### What's Changed
+            ## What's Changed
             
             See the full changelog in the commits since the last release.
           draft: false
@@ -120,76 +156,3 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Push binaries to releases branch
-        run: |
-          # Configure git
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Create or checkout releases branch
-          git fetch origin releases || true
-          git checkout -B releases
-          
-          # Clear the branch (keep only dist folder)
-          git rm -rf . || true
-          git clean -fdx
-          
-          # Copy dist folder from build
-          mkdir -p dist
-          cp -r ../dist/* dist/ || true
-          
-          # Download and add xray-core binaries
-          mkdir -p xray
-          echo "Downloading Xray-core releases..."
-          
-          # Get latest Xray-core version
-          XRAY_VERSION=$(curl -s https://api.github.com/repos/XTLS/Xray-core/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-          echo "Latest Xray-core version: $XRAY_VERSION"
-          
-          # Download Xray-core for all platforms
-          platforms=(
-            "linux-64"
-            "linux-arm64-v8a"
-            "macos-64"
-            "macos-arm64-v8a"
-            "windows-64"
-          )
-          
-          for platform in "${platforms[@]}"; do
-            echo "Downloading Xray-$platform..."
-            curl -fsSL "https://github.com/XTLS/Xray-core/releases/download/$XRAY_VERSION/Xray-$platform.zip" \
-              -o "xray/Xray-$platform.zip" || echo "Failed to download $platform"
-          done
-          
-          # Download geo data files
-          echo "Downloading geo data files..."
-          curl -fsSL "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat" \
-            -o "xray/geoip.dat"
-          curl -fsSL "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat" \
-            -o "xray/geosite.dat"
-          
-          # Create version file
-          echo "$XRAY_VERSION" > xray/VERSION
-          
-          # Create README for the releases branch
-          cat > README.md << 'EOF'
-          # crosh Releases Branch
-          
-          This branch contains pre-built binaries for crosh and xray-core.
-          
-          **DO NOT commit to this branch manually!**
-          
-          This branch is automatically maintained by GitHub Actions.
-          
-          ## Access via Cloudflare CDN
-          
-          - crosh binaries: `https://crosh.boomyao.com/dist/`
-          - xray-core binaries: `https://crosh.boomyao.com/xray/`
-          EOF
-          
-          # Commit and force push
-          git add .
-          git commit -m "Release ${{ steps.get_version.outputs.VERSION }} (with Xray-core $XRAY_VERSION)" || true
-          git push origin releases --force
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

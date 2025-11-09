@@ -1,21 +1,22 @@
 /**
  * Cloudflare Worker for crosh CDN
- * Proxies GitHub releases and branches to provide fast access in mainland China
+ * Proxies GitHub Release Assets to provide fast access in mainland China
  * 
  * Routes:
- * - /api/version - Returns latest version from GitHub API
- * - /dist/* - Serves crosh binaries from releases branch
- * - /xray/* - Serves Xray-core files from releases branch
- * - /scripts/* - Serves scripts from main branch
+ * - /api/version - Returns latest version from crosh GitHub API
+ * - /dist/* - Serves crosh binaries from crosh Release Assets (boomyao/crosh)
+ * - /xray/* - Serves Xray-core files from Xray Release Assets (XTLS/Xray-core)
+ * - /scripts/* - Serves scripts from crosh main branch
  */
 
 const REPO = 'boomyao/crosh';
+const XRAY_REPO = 'XTLS/Xray-core';
 const GITHUB_RAW = 'https://raw.githubusercontent.com';
 const GITHUB_API = 'https://api.github.com';
 
 // Cache durations
 const CACHE_DURATIONS = {
-  version: 300,      // 5 minutes for version API
+  version: 3600,     // 1 hour for version API
   binary: 86400,     // 24 hours for binaries
   script: 3600,      // 1 hour for scripts
   data: 86400,       // 24 hours for data files
@@ -35,19 +36,16 @@ async function handleRequest(request) {
       return await handleVersionAPI(request);
     }
 
-    // Route: /dist/* - Serve crosh binaries from releases branch
+    // Route: /dist/* - Serve crosh binaries from GitHub Release Assets
     if (path.startsWith('/dist/')) {
       const filename = path.substring(6); // Remove '/dist/'
-      return await proxyGitHubFile('releases', `dist/${filename}`, 'application/octet-stream', CACHE_DURATIONS.binary);
+      return await proxyReleaseAsset(filename, request, REPO);
     }
 
-    // Route: /xray/* - Serve Xray-core files from releases branch
+    // Route: /xray/* - Serve Xray-core files from GitHub Release Assets
     if (path.startsWith('/xray/')) {
       const filename = path.substring(6); // Remove '/xray/'
-      const contentType = filename.endsWith('.zip') ? 'application/zip' :
-                         filename.endsWith('.dat') ? 'application/octet-stream' :
-                         'text/plain';
-      return await proxyGitHubFile('releases', `xray/${filename}`, contentType, CACHE_DURATIONS.data);
+      return await proxyReleaseAsset(filename, request, XRAY_REPO);
     }
 
     // Route: /scripts/* - Serve scripts from main branch
@@ -119,8 +117,61 @@ async function handleVersionAPI(request) {
 }
 
 /**
+ * Proxy a release asset from GitHub Releases
+ * Uses GitHub's built-in /releases/latest/download/ endpoint
+ * @param {string} filename - Name of the asset file
+ * @param {Request} request - Original request for caching
+ * @param {string} repo - GitHub repository in format 'owner/repo'
+ */
+async function proxyReleaseAsset(filename, request, repo) {
+  const cacheKey = new Request(request.url, request);
+  const cache = caches.default;
+
+  // Try to get from cache
+  let response = await cache.match(cacheKey);
+  if (response) {
+    return response;
+  }
+
+  // Use GitHub's direct latest release download URL
+  // GitHub automatically redirects to the actual asset URL
+  const downloadUrl = `https://github.com/${repo}/releases/latest/download/${filename}`;
+  
+  // Download the asset from GitHub
+  const assetResponse = await fetch(downloadUrl, {
+    headers: {
+      'User-Agent': 'crosh-cdn-worker',
+    },
+  });
+
+  if (!assetResponse.ok) {
+    if (assetResponse.status === 404) {
+      return new Response(`Asset not found: ${filename} in ${repo}`, { 
+        status: 404,
+        headers: { 'Content-Type': 'text/plain' }
+      });
+    }
+    return new Response(`Failed to download asset from ${repo}`, { status: 502 });
+  }
+
+  // Create response with appropriate headers
+  response = new Response(assetResponse.body, {
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'Cache-Control': `public, max-age=${CACHE_DURATIONS.binary}`,
+      'Access-Control-Allow-Origin': '*',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    },
+  });
+
+  // Store in cache
+  await cache.put(cacheKey, response.clone());
+  return response;
+}
+
+/**
  * Proxy a file from GitHub repository
- * @param {string} branch - Branch name (main, releases, etc.)
+ * @param {string} branch - Branch name (e.g., main)
  * @param {string} filePath - File path within the repository
  * @param {string} contentType - MIME type for the response
  * @param {number} cacheDuration - Cache duration in seconds
@@ -226,12 +277,12 @@ function getUsageHTML() {
 
   <div class="endpoint">
     <strong>GET /dist/{binary}</strong><br>
-    Download crosh binaries (e.g., <code>crosh-linux-amd64</code>, <code>crosh-darwin-arm64</code>)
+    Download crosh binaries from latest GitHub Release (e.g., <code>crosh-linux-amd64</code>, <code>crosh-darwin-arm64</code>)
   </div>
 
   <div class="endpoint">
     <strong>GET /xray/{file}</strong><br>
-    Download Xray-core binaries and data files (e.g., <code>Xray-linux-64.zip</code>, <code>geoip.dat</code>)
+    Download Xray-core binaries and data files from XTLS/Xray-core latest release (e.g., <code>Xray-linux-64.zip</code>, <code>geoip.dat</code>)
   </div>
 
   <div class="endpoint">

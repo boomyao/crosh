@@ -9,7 +9,4 @@ routes = [
   { pattern = "crosh.boomyao.com/*", zone_name = "boomyao.com" }
 ]
 
-# Optional: Development environment for testing
-[env.dev]
-name = "crosh-cdn-dev"
 
