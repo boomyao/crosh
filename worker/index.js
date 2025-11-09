@@ -118,8 +118,10 @@ async function handleVersionAPI(request) {
 
 /**
  * Proxy a release asset from GitHub Releases
- * Uses GitHub's built-in /releases/latest/download/ endpoint
- * @param {string} filename - Name of the asset file
+ * Supports both formats:
+ * - filename only: uses /releases/latest/download/
+ * - version/filename: uses /releases/download/{version}/
+ * @param {string} filename - Name of the asset file (can include version like "v1.0.0/file.zip")
  * @param {Request} request - Original request for caching
  * @param {string} repo - GitHub repository in format 'owner/repo'
  */
@@ -133,9 +135,21 @@ async function proxyReleaseAsset(filename, request, repo) {
     return response;
   }
 
-  // Use GitHub's direct latest release download URL
-  // GitHub automatically redirects to the actual asset URL
-  const downloadUrl = `https://github.com/${repo}/releases/latest/download/${filename}`;
+  // Parse filename to check if it contains version
+  // Format can be: "file.zip" or "v1.0.0/file.zip"
+  let downloadUrl;
+  let actualFilename = filename;
+  
+  const parts = filename.split('/');
+  if (parts.length === 2) {
+    // Format: version/filename
+    const version = parts[0];
+    actualFilename = parts[1];
+    downloadUrl = `https://github.com/${repo}/releases/download/${version}/${actualFilename}`;
+  } else {
+    // Format: filename only - use latest
+    downloadUrl = `https://github.com/${repo}/releases/latest/download/${filename}`;
+  }
   
   // Download the asset from GitHub
   const assetResponse = await fetch(downloadUrl, {
@@ -160,7 +174,7 @@ async function proxyReleaseAsset(filename, request, repo) {
       'Content-Type': 'application/octet-stream',
       'Cache-Control': `public, max-age=${CACHE_DURATIONS.binary}`,
       'Access-Control-Allow-Origin': '*',
-      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Disposition': `attachment; filename="${actualFilename}"`,
     },
   });
 

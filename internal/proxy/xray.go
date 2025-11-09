@@ -33,21 +33,6 @@ var xraySources = []XraySource{
 		APIURL:      "https://api.github.com/repos/XTLS/Xray-core/releases/latest",
 		DownloadURL: "https://github.com/XTLS/Xray-core/releases/download",
 	},
-	{
-		Name:        "gh.ddlc.top",
-		APIURL:      "https://gh.ddlc.top/https://api.github.com/repos/XTLS/Xray-core/releases/latest",
-		DownloadURL: "https://gh.ddlc.top/https://github.com/XTLS/Xray-core/releases/download",
-	},
-	{
-		Name:        "ghps.cc",
-		APIURL:      "https://ghps.cc/https://api.github.com/repos/XTLS/Xray-core/releases/latest",
-		DownloadURL: "https://ghps.cc/https://github.com/XTLS/Xray-core/releases/download",
-	},
-	{
-		Name:        "gh-proxy.com",
-		APIURL:      "https://gh-proxy.com/https://api.github.com/repos/XTLS/Xray-core/releases/latest",
-		DownloadURL: "https://gh-proxy.com/https://github.com/XTLS/Xray-core/releases/download",
-	},
 }
 
 // XrayManager manages Xray-core process
@@ -138,9 +123,6 @@ func (x *XrayManager) downloadGeoData() error {
 			sources: []string{
 				"https://crosh.boomyao.com/xray/geoip.dat",
 				"https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat",
-				"https://gh.ddlc.top/https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat",
-				"https://ghps.cc/https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat",
-				"https://gh-proxy.com/https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat",
 			},
 		},
 		{
@@ -149,9 +131,6 @@ func (x *XrayManager) downloadGeoData() error {
 			sources: []string{
 				"https://crosh.boomyao.com/xray/geosite.dat",
 				"https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat",
-				"https://gh.ddlc.top/https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat",
-				"https://ghps.cc/https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat",
-				"https://gh-proxy.com/https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat",
 			},
 		},
 	}
@@ -385,7 +364,7 @@ func (x *XrayManager) getLatestReleaseInfo() (version, assetName string, err err
 		} else {
 			version, assetName, err = x.getVersionFromGitHub(source)
 		}
-		
+
 		if err == nil {
 			return version, assetName, nil
 		}
@@ -398,26 +377,26 @@ func (x *XrayManager) getLatestReleaseInfo() (version, assetName string, err err
 // getVersionFromCDN fetches version info from Cloudflare CDN
 func (x *XrayManager) getVersionFromCDN(source XraySource) (string, string, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	
+
 	resp, err := client.Get(source.APIURL)
 	if err != nil {
 		return "", "", err
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusOK {
 		return "", "", fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	
+
 	versionBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", "", err
 	}
-	
+
 	version := strings.TrimSpace(string(versionBytes))
 	osName, archName := getXrayPlatformNames()
 	assetName := fmt.Sprintf("Xray-%s-%s.zip", osName, archName)
-	
+
 	return version, assetName, nil
 }
 
